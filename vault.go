@@ -72,9 +72,7 @@ func selectVault(vaults []Vault) *Vault {
 		return nil
 	}
 
-	parts := strings.Split(userSelection, "|")
-	vaultName := parts[0]
-	vaultPath := parts[1]
+	vaultName, vaultPath := extractSelection(userSelection)
 
 	return &Vault{
 		Path: strings.TrimSpace(vaultPath),
