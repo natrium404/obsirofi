@@ -24,5 +24,5 @@ func main() {
 		return
 	}
 
-	openInObsidian(selectedVault.Name, "")
+	browseVault(selectedVault.Path)
 }

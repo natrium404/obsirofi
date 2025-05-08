@@ -56,7 +56,7 @@ func selectVault(vaults []Vault) *Vault {
 	var options strings.Builder
 
 	for _, vault := range vaults {
-		options.WriteString(fmt.Sprintf("<b>%s</b><span foreground='#D3D3D3'> | %s</span>\n", vault.Name, vault.Path))
+		options.WriteString(fmt.Sprintf("\ueb29 <b>%s</b><span foreground='#D3D3D3'> | %s</span>\n", vault.Name, vault.Path))
 	}
 
 	command := exec.Command("rofi", "-dmenu", "-markup-rows", "-i", "-p", rofiPrompt, "-sep", "\n")
@@ -72,10 +72,66 @@ func selectVault(vaults []Vault) *Vault {
 		return nil
 	}
 
-	vaultName, vaultPath := extractSelection(userSelection)
+	vaultName, vaultPath := extractVaultSelection(userSelection)
 
 	return &Vault{
 		Path: strings.TrimSpace(vaultPath),
 		Name: strings.TrimSpace(vaultName),
+	}
+}
+
+// Browse files
+func browseVault(vaultPath string) {
+	vaultName := filepath.Base(vaultPath)
+	currentPath := vaultPath
+
+	for {
+		dir, err := os.ReadDir(currentPath)
+		if err != nil {
+			printRofiError(fmt.Sprintf("Error reading directory: %s", err))
+			return
+		}
+
+		var options strings.Builder
+		options.WriteString("\uedf5 <span>Open</span> vault\n")
+		if currentPath != vaultPath {
+			options.WriteString("<span>../</span>\n")
+		}
+
+		for _, entry := range dir {
+			if strings.HasPrefix(entry.Name(), ".") {
+				continue
+			}
+
+			filename := entry.Name()
+			fileIcon := getFileIcon(filename)
+
+			if entry.IsDir() {
+				filename = fmt.Sprintf("\uf07b <span>%s/</span>", filename)
+			} else {
+				filename = fmt.Sprintf("%s <span>%s</span>", fileIcon, filename)
+			}
+			options.WriteString(fmt.Sprintf("%s\n", filename))
+		}
+
+		command := exec.Command("rofi", "-dmenu", "-markup-rows", "-i", "-p", fmt.Sprintf("Browsing"), "-sep", "\n")
+		command.Stdin = strings.NewReader(options.String())
+		out, err := command.Output()
+		if err != nil {
+			return
+		}
+
+		userSelection := extractFileSelection(string(out))
+		if strings.ToLower(userSelection) == "open" {
+			openInObsidian(vaultName, "")
+			break
+		}
+		currentPath = filepath.Join(currentPath, userSelection)
+
+		if info, err := os.Stat(currentPath); err == nil && !info.IsDir() {
+			path := strings.Replace(currentPath, vaultPath, "", 1)
+			openInObsidian(vaultName, path)
+			break
+		}
 	}
 }
