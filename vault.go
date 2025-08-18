@@ -94,6 +94,7 @@ func browseVault(vaultPath string) {
 
 		var options strings.Builder
 		options.WriteString("\uedf5 <span>Open</span> vault\n")
+		options.WriteString("\uf002 <span>Search</span> files\n")
 		if currentPath != vaultPath {
 			options.WriteString("<span>../</span>\n")
 		}
@@ -126,6 +127,16 @@ func browseVault(vaultPath string) {
 			openInObsidian(vaultName, "")
 			break
 		}
+		if strings.ToLower(userSelection) == "search" {
+			if results := searchFiles(vaultPath); results != nil {
+				selectedFile := displaySearchResults(results)
+				if selectedFile != "" {
+					relPath, _ := filepath.Rel(vaultPath, selectedFile)
+					openInObsidian(vaultName, relPath)
+				}
+			}
+			continue
+		}
 		currentPath = filepath.Join(currentPath, userSelection)
 
 		if info, err := os.Stat(currentPath); err == nil && !info.IsDir() {
@@ -134,4 +145,72 @@ func browseVault(vaultPath string) {
 			break
 		}
 	}
+}
+
+// searchFiles prompts for a search term and returns matching files
+func searchFiles(vaultPath string) []string {
+	// Prompt for search term
+	command := exec.Command("rofi", "-dmenu", "-markup-rows", "-i", "-p", "Search")
+	command.Stdin = strings.NewReader("")
+	out, err := command.Output()
+	if err != nil {
+		return nil
+	}
+
+	searchTerm := strings.TrimSpace(string(out))
+	if searchTerm == "" {
+		return nil
+	}
+
+	var results []string
+	err = filepath.Walk(vaultPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() && strings.Contains(strings.ToLower(info.Name()), strings.ToLower(searchTerm)) {
+			results = append(results, path)
+		}
+		return nil
+	})
+
+	if err != nil {
+		printRofiError(fmt.Sprintf("Error searching files: %s", err))
+		return nil
+	}
+
+	return results
+}
+
+// displaySearchResults shows search results in rofi and returns the selected file
+func displaySearchResults(results []string) string {
+	if len(results) == 0 {
+		printRofiError("No files found")
+		return ""
+	}
+
+	var options strings.Builder
+	for _, path := range results {
+		filename := filepath.Base(path)
+		fileIcon := getFileIcon(filename)
+		if fileIcon == "" {
+			fileIcon = "\uf15b" // default file icon
+		}
+		options.WriteString(fmt.Sprintf("%s <b>%s</b><span foreground='#D3D3D3'> | %s</span>\n", 
+			fileIcon, filename, path))
+	}
+
+	command := exec.Command("rofi", "-dmenu", "-markup-rows", "-i", "-p", "Results")
+	command.Stdin = strings.NewReader(options.String())
+	out, err := command.Output()
+	if err != nil {
+		return ""
+	}
+
+	selection := strings.TrimSpace(string(out))
+	if selection == "" {
+		return ""
+	}
+
+	_, path := extractVaultSelection(selection)
+	return path
 }
