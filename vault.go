@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -19,6 +20,10 @@ type Vault struct {
 	Path string
 	Name string
 }
+
+type File Vault
+
+var vaultFiles = make(map[string][]File)
 
 // Get vaults path and name from config file
 func getVaultsFromConfig(configFilePath string) ([]Vault, error) {
@@ -48,10 +53,15 @@ func getVaultsFromConfig(configFilePath string) ([]Vault, error) {
 		return nil, fmt.Errorf("No vaults found.")
 	}
 
+	// sort vault alphabetically
+	sort.Slice(vaults, func(i, j int) bool {
+		return strings.ToLower(vaults[i].Name) < strings.ToLower(vaults[j].Name)
+	})
+
 	return vaults, nil
 }
 
-// Select Vaults in Rofi Menu
+// Select vaults in Rofi menu
 func selectVault(vaults []Vault) *Vault {
 	var options strings.Builder
 
@@ -72,7 +82,7 @@ func selectVault(vaults []Vault) *Vault {
 		return nil
 	}
 
-	vaultName, vaultPath := extractVaultSelection(userSelection)
+	vaultName, vaultPath := extractSelection(userSelection)
 
 	return &Vault{
 		Path: strings.TrimSpace(vaultPath),
@@ -80,7 +90,37 @@ func selectVault(vaults []Vault) *Vault {
 	}
 }
 
-// Browse files
+// fetch all the files from the vault
+func fetchVaultFiles(vaultPath string) {
+	var files []File
+
+	filepath.Walk(vaultPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+
+		fileName := info.Name()
+
+		// skip hidden files and directories
+		hidden := strings.HasPrefix(fileName, ".")
+		if info.IsDir() && hidden {
+			return filepath.SkipDir
+		}
+
+		// add files path and name
+		if !info.IsDir() && !hidden {
+			files = append(files, File{
+				Path: path,
+				Name: fileName,
+			})
+		}
+		return nil
+	})
+
+	vaultFiles[vaultPath] = files
+}
+
+// Browse vault
 func browseVault(vaultPath string) {
 	vaultName := filepath.Base(vaultPath)
 	currentPath := vaultPath
@@ -93,8 +133,8 @@ func browseVault(vaultPath string) {
 		}
 
 		var options strings.Builder
-		options.WriteString("\uedf5 <span>Open</span> vault\n")
-		options.WriteString("\uf002 <span>Search</span> files\n")
+		options.WriteString("\uedf5   <span>Open</span> vault\n")
+		options.WriteString("\uf002  <span>Search</span> files\n")
 		if currentPath != vaultPath {
 			options.WriteString("<span>../</span>\n")
 		}
@@ -108,14 +148,14 @@ func browseVault(vaultPath string) {
 			fileIcon := getFileIcon(filename)
 
 			if entry.IsDir() {
-				filename = fmt.Sprintf("\uf07b <span>%s/</span>", filename)
+				filename = fmt.Sprintf("\uf07b   <span>%s/</span>", filename)
 			} else {
-				filename = fmt.Sprintf("%s <span>%s</span>", fileIcon, filename)
+				filename = fmt.Sprintf("%s   <span>%s</span>", fileIcon, filename)
 			}
 			options.WriteString(fmt.Sprintf("%s\n", filename))
 		}
 
-		command := exec.Command("rofi", "-dmenu", "-markup-rows", "-i", "-p", fmt.Sprintf("Browsing"), "-sep", "\n")
+		command := exec.Command("rofi", "-dmenu", "-markup-rows", "-i", "-p", "Browsing", "-sep", "\n")
 		command.Stdin = strings.NewReader(options.String())
 		out, err := command.Output()
 		if err != nil {
@@ -128,14 +168,12 @@ func browseVault(vaultPath string) {
 			break
 		}
 		if strings.ToLower(userSelection) == "search" {
-			if results := searchFiles(vaultPath); results != nil {
-				selectedFile := displaySearchResults(results)
-				if selectedFile != "" {
-					relPath, _ := filepath.Rel(vaultPath, selectedFile)
-					openInObsidian(vaultName, relPath)
-				}
+			selectedFile := searchFiles(vaultPath)
+			path := strings.Replace(selectedFile, vaultPath, "", 1)
+			if path != "" {
+				openInObsidian(vaultName, path)
 			}
-			continue
+			break
 		}
 		currentPath = filepath.Join(currentPath, userSelection)
 
@@ -147,59 +185,23 @@ func browseVault(vaultPath string) {
 	}
 }
 
-// searchFiles prompts for a search term and returns matching files
-func searchFiles(vaultPath string) []string {
-	// Prompt for search term
+// search files and return path
+func searchFiles(vaultPath string) string {
 	command := exec.Command("rofi", "-dmenu", "-markup-rows", "-i", "-p", "Search")
-	command.Stdin = strings.NewReader("")
-	out, err := command.Output()
-	if err != nil {
-		return nil
+	var options strings.Builder
+
+	files := vaultFiles[vaultPath]
+	for _, file := range files {
+		fileIcon := getFileIcon(file.Name)
+		options.WriteString(fmt.Sprintf("%s <b>%s</b><span foreground='#D3D3D3'> | %s</span>\n",
+			fileIcon, file.Name, file.Path))
 	}
 
-	searchTerm := strings.TrimSpace(string(out))
-	if searchTerm == "" {
-		return nil
-	}
-
-	var results []string
-	err = filepath.Walk(vaultPath, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if !info.IsDir() && strings.Contains(strings.ToLower(info.Name()), strings.ToLower(searchTerm)) {
-			results = append(results, path)
-		}
-		return nil
-	})
-
-	if err != nil {
-		printRofiError(fmt.Sprintf("Error searching files: %s", err))
-		return nil
-	}
-
-	return results
-}
-
-// displaySearchResults shows search results in rofi and returns the selected file
-func displaySearchResults(results []string) string {
-	if len(results) == 0 {
+	if options.String() == "" {
 		printRofiError("No files found")
 		return ""
 	}
 
-	var options strings.Builder
-	for _, path := range results {
-		filename := filepath.Base(path)
-		fileIcon := getFileIcon(filename)
-		if fileIcon == "" {
-			fileIcon = "\uf15b" // default file icon
-		}
-		options.WriteString(fmt.Sprintf("%s <b>%s</b><span foreground='#D3D3D3'> | %s</span>\n", 
-			fileIcon, filename, path))
-	}
-
-	command := exec.Command("rofi", "-dmenu", "-markup-rows", "-i", "-p", "Results")
 	command.Stdin = strings.NewReader(options.String())
 	out, err := command.Output()
 	if err != nil {
@@ -211,6 +213,6 @@ func displaySearchResults(results []string) string {
 		return ""
 	}
 
-	_, path := extractVaultSelection(selection)
+	_, path := extractSelection(selection)
 	return path
 }

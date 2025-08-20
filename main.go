@@ -20,9 +20,9 @@ func main() {
 	}
 
 	selectedVault := selectVault(vaults)
-	if selectedVault == nil {
-		return
-	}
 
-	browseVault(selectedVault.Path)
+	if selectedVault != nil {
+		go fetchVaultFiles(selectedVault.Path)
+		browseVault(selectedVault.Path)
+	}
 }
